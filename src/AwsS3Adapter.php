@@ -723,4 +723,32 @@ class AwsS3Adapter extends AbstractAdapter implements CanOverwriteFiles
             throw $e;
         }
     }
+
+    /**
+     * Get a temporary URL for the file at the given path.
+     *
+     * @param  string  $path
+     * @param  \DateTimeInterface  $expiration
+     * @param  array  $options
+     * @return string
+     */
+    public function getTemporaryUrl($path, $expiration, $options)
+    {
+        $client = $this->getClient();
+
+        $command = $client->getCommand('GetObject', array_merge([
+            'Bucket' => $this->getBucket(),
+            'Key' => $this->getPathPrefix().$path,
+        ], $options));
+
+        if (!empty($this->options['signature_host'])) {
+            $command->getHandlerList()->appendSign(Middleware::mapRequest(function(RequestInterface $request) {
+                return $request->withHeader('Host', $this->options['signature_host']);
+            }));
+        }
+
+        return (string) $client->createPresignedRequest(
+            $command, $expiration
+        )->getUri();
+    }
 }
