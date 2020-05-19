@@ -2,11 +2,16 @@
 
 namespace League\Flysystem\AwsS3v3;
 
+use Aws\CommandInterface;
+use Aws\Middleware;
 use Aws\Result;
+use Aws\S3\BucketEndpointMiddleware;
 use Aws\S3\Exception\DeleteMultipleObjectsException;
 use Aws\S3\Exception\S3Exception;
 use Aws\S3\Exception\S3MultipartUploadException;
 use Aws\S3\S3ClientInterface;
+use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Uri;
 use League\Flysystem\Adapter\AbstractAdapter;
 use League\Flysystem\Adapter\CanOverwriteFiles;
 use League\Flysystem\AdapterInterface;
@@ -741,14 +746,24 @@ class AwsS3Adapter extends AbstractAdapter implements CanOverwriteFiles
             'Key' => $this->getPathPrefix().$path,
         ], $options));
 
-        if (!empty($this->options['signature_host'])) {
-            $command->getHandlerList()->appendSign(Middleware::mapRequest(function(RequestInterface $request) {
-                return $request->withHeader('Host', $this->options['signature_host']);
+        if ($this->options['use_bucket_for_signature']) {
+            $command->getHandlerList()->appendSign(Middleware::mapRequest(function(Request $request) {
+                return $request->withHeader('Host', "{$this->bucket}.s3.amazonaws.com");
             }));
+            $command->getHandlerList()->remove('s3.endpoint_middleware');
+			$command->getHandlerList()->appendBuild(BucketEndpointMiddleware::wrap(), 's3.bucket_endpoint');
         }
 
-        return (string) $client->createPresignedRequest(
-            $command, $expiration
-        )->getUri();
+        $uri = $client->createPresignedRequest($command, $expiration)->getUri();
+
+		if ($this->options['use_bucket_for_signature']) {
+			$uri = $uri->withPath(str_replace($this->bucket.'/', '', $uri->getPath()));
+
+			if (!empty($this->options['temporary_url_host'])) {
+				$uri = $uri->withHost((new Uri($this->options['temporary_url_host']))->getHost());
+			}
+		}
+
+		return (string) $uri;
     }
 }
